@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ESP32 Control Dual</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+  .wrap { padding: 1.5rem 1rem; max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 13px; letter-spacing: 0.2em; color: #555; text-transform: uppercase; margin-bottom: 1.5rem; }
+
+  .card { background: #181818; border: 0.5px solid #2a2a2a; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+  .card-title { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #555; margin-bottom: 1rem; }
+
+  .ip-row { display: flex; gap: 8px; margin-bottom: 1rem; }
+  .ip-row input { flex: 1; padding: 9px 12px; font-size: 13px; font-family: monospace; border: 0.5px solid #2a2a2a; border-radius: 8px; background: #111; color: #e0e0e0; outline: none; }
+  .ip-row input:focus { border-color: #444; }
+  .btn { padding: 9px 16px; font-size: 12px; font-family: monospace; border: 0.5px solid #2a2a2a; border-radius: 8px; background: transparent; color: #e0e0e0; cursor: pointer; white-space: nowrap; letter-spacing: 0.05em; }
+  .btn:hover { background: #222; }
+
+  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 1.25rem; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #333; flex-shrink: 0; transition: background 0.3s; }
+  .dot.connecting { background: #c8852a; }
+  .dot.open { background: #1D9E75; }
+  .dot.error { background: #c84040; }
+  .status-text { font-size: 12px; color: #555; }
+
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem; }
+  .metric { background: #111; border: 0.5px solid #222; border-radius: 8px; padding: 0.75rem 1rem; }
+  .metric .lbl { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #444; margin-bottom: 4px; }
+  .metric .val { font-size: 24px; font-weight: 300; }
+  .metric .unit { font-size: 12px; color: #444; margin-left: 3px; }
+
+  .joy-area { display: flex; justify-content: center; padding: 0.75rem 0; }
+  canvas { touch-action: none; cursor: grab; display: block; }
+  canvas:active { cursor: grabbing; }
+
+  .speed-bar-wrap { margin-top: 0.75rem; }
+  .speed-bar-label { display: flex; justify-content: space-between; font-size: 11px; color: #444; margin-bottom: 5px; }
+  .speed-bar-bg { height: 3px; background: #222; border-radius: 99px; overflow: hidden; position: relative; }
+  .speed-bar-center { position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: #333; }
+  .speed-bar-fill { height: 100%; border-radius: 99px; transition: width 0.05s, margin-left 0.05s; position: absolute; top: 0; }
+
+  .hint { font-size: 11px; color: #333; text-align: center; margin-top: 0.75rem; letter-spacing: 0.05em; }
+
+  .log { font-family: monospace; font-size: 11px; color: #444; background: #111; border: 0.5px solid #1e1e1e; border-radius: 8px; padding: 0.75rem; height: 80px; overflow-y: auto; display: flex; flex-direction: column-reverse; }
+  .log-line { line-height: 1.7; }
+  .log-line.sent { color: #1D9E75; }
+  .log-line.recv { color: #378ADD; }
+  .log-line.err { color: #c84040; }
+
+  .servo-ui-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 1rem 0; width: 100%; }
+  .btn-toggle { width: 100%; max-width: 220px; padding: 14px; font-size: 14px; font-weight: bold; font-family: monospace; border-radius: 8px; border: 0.5px solid #2a2a2a; color: #fff; cursor: pointer; letter-spacing: 0.1em; transition: background 0.2s, border-color 0.2s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ESP32 · Control Sincronizado</h1>
+
+  <div class="ip-row">
+    <input id="ipInput" type="text" value="192.168.4.1" placeholder="IP o hostname del ESP32" />
+    <button class="btn" id="connBtn" onclick="toggleConnect()">Conectar</button>
+  </div>
+
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="statusTxt">Desconectado</span>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Mecanismos de Rueda (Dual)</div>
+    <div class="metrics" style="grid-template-columns: 1.2fr 0.9fr 0.9fr; gap: 6px;">
+      <div class="metric">
+        <div class="lbl">Estado global</div>
+        <span class="val" id="servoEstado" style="font-size:18px; font-weight: bold; color:#555555;">CERRADO</span>
+      </div>
+      <div class="metric">
+        <div class="lbl">Servo Izq</div>
+        <span class="val" id="angIzq" style="font-size:20px;">0</span><span class="unit">°</span>
+      </div>
+      <div class="metric">
+        <div class="lbl">Servo Der</div>
+        <span class="val" id="angDer" style="font-size:20px;">57</span><span class="unit">°</span>
+      </div>
+    </div>
+    
+    <div class="servo-ui-wrap">
+      <button id="btnServo" class="btn-toggle" onclick="toggleServo()" style="background: #1D9E75;">ABRIR</button>
+    </div>
+    <p class="hint">Accionamiento en espejo simultáneo para ambos lados</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Motor DC — velocidad continua</div>
+    <div class="metrics" style="grid-template-columns: 1fr 1fr 1fr;">
+      <div class="metric">
+        <div class="lbl">Joy SP</div>
+        <span class="val" id="motorPct" style="font-size:20px;">0</span><span class="unit">%</span>
+      </div>
+      <div class="metric">
+        <div class="lbl">RPM Real</div>
+        <span class="val" id="motorRPM" style="font-size:20px; color:#378ADD;">0</span><span class="unit" style="font-size:10px;">rpm</span>
+      </div>
+      <div class="metric">
+        <div class="lbl">Dirección</div>
+        <span class="val" id="motorDir" style="font-size:13px; white-space:nowrap;">—</span>
+      </div>
+    </div>
+    <div class="joy-area">
+      <canvas id="joyMotor" width="200" height="200"></canvas>
+    </div>
+    <div class="speed-bar-wrap">
+      <div class="speed-bar-label"><span>◀ reversa</span><span>parado</span><span>adelante ▶</span></div>
+      <div class="speed-bar-bg">
+        <div class="speed-bar-center"></div>
+        <div class="speed-bar-fill" id="speedFill"></div>
+      </div>
+    </div>
+    <p class="hint">↑ adelante &nbsp;·&nbsp; centro = parado &nbsp;·&nbsp; ↓ reversa</p>
+  </div>
+
+  <div class="card-title" style="margin-bottom:6px">Log</div>
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+// ── Estado global ─────────────────────────────────────
+let servoAbierto = false;
+let lastSentMotor = null;
+let ws = null;
+
+// ── Utils ─────────────────────────────────────────────
+function setStatus(state, text) {
+  document.getElementById("dot").className = "dot " + state;
+  document.getElementById("statusTxt").textContent = text;
+}
+
+function addLog(msg, type) {
+  const log = document.getElementById("log");
+  const d = document.createElement("div");
+  d.className = "log-line " + (type || "");
+  const t = new Date().toTimeString().slice(0, 8);
+  d.textContent = `[${t}] ${msg}`;
+  log.prepend(d);
+  while (log.children.length > 40) log.removeChild(log.lastChild);
+}
+
+// ── WebSocket ─────────────────────────────────────────
+function toggleConnect() {
+  if (ws && ws.readyState === WebSocket.OPEN) { ws.close(); return; }
+  const ip = document.getElementById("ipInput").value.trim().replace(/^https?:\/\//, "");
+  setStatus("connecting", "Conectando a " + ip + "...");
+  document.getElementById("connBtn").textContent = "Cancelar";
+  addLog("ws://" + ip + "/ws");
+  ws = new WebSocket("ws://" + ip + "/ws");
+  ws.onopen  = () => { setStatus("open", "Conectado · " + ip); document.getElementById("connBtn").textContent = "Desconectar"; addLog("Conexión abierta", "recv"); };
+  
+  ws.onmessage = e => {
+    addLog("← " + e.data, "recv");
+    try {
+      const datos = JSON.parse(e.data);
+      
+      if(datos.pv !== undefined) {
+        document.getElementById("motorRPM").textContent = Math.round(datos.pv);
+      }
+      
+      if(datos.servo !== undefined) {
+        let estadoRealESP = datos.servo;
+        const btn = document.getElementById("btnServo");
+        const estadoLabel = document.getElementById("servoEstado");
+        
+        if (estadoRealESP === 0) { 
+          servoAbierto = false;
+          document.getElementById("angIzq").textContent = "0";
+          document.getElementById("angDer").textContent = "57";
+          
+          btn.textContent = "ABRIR";
+          btn.style.background = "#1D9E75"; 
+          estadoLabel.textContent = "CERRADO";
+          estadoLabel.style.color = "#555555";
+        } 
+        else if (estadoRealESP === 57) { 
+          servoAbierto = true;
+          document.getElementById("angIzq").textContent = "57";
+          document.getElementById("angDer").textContent = "0";
+          
+          btn.textContent = "CERRAR";
+          btn.style.background = "#c84040"; 
+          estadoLabel.textContent = "ABIERTO";
+          estadoLabel.style.color = "#1D9E75";
+        }
+      }
+    } catch(err) {}
+  };
+  
+  ws.onerror = () => { setStatus("error", "Error de conexión"); addLog("Error WebSocket", "err"); };
+  ws.onclose = () => { setStatus("", "Desconectado"); document.getElementById("connBtn").textContent = "Conectar"; addLog("Conexión cerrada"); ws = null; };
+}
+
+function wsSend(msg) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(msg);
+  addLog("→ " + msg, "sent");
+}
+
+// ── ACCIÓN DEL BOTÓN MULTI-SERVO ──────────────────────
+function toggleServo() {
+  if (!servoAbierto) {
+    wsSend("S:ABRIR");
+  } else {
+    wsSend("S:CERRAR");
+  }
+}
+
+// ── JOYSTICK MOTOR ────────────────────────────────────
+const cvM = document.getElementById("joyMotor");
+const ctxM = cvM.getContext("2d");
+let joyMY = 0, draggingM = false, lastMEY = 0;
+
+function drawMotor() {
+  ctxM.clearRect(0, 0, 200, 200);
+  ctxM.beginPath(); ctxM.arc(100, 100, 90, 0, Math.PI*2);
+  ctxM.strokeStyle = "#2a2a2a"; ctxM.lineWidth = 1; ctxM.stroke();
+  ctxM.beginPath(); ctxM.moveTo(70, 100); ctxM.lineTo(130, 100);
+  ctxM.strokeStyle = "#222"; ctxM.lineWidth = 1; ctxM.stroke();
+  const norm = -joyMY / 62;
+  ctxM.beginPath(); ctxM.arc(100, 100 + joyMY, 28, 0, Math.PI*2);
+  ctxM.fillStyle = norm > 0.05 ? "#378ADD" : norm < -0.05 ? "#c84040" : "#333";
+  ctxM.fill();
+}
+
+function updateMotorUI(norm) {
+  const pct = Math.round(Math.abs(norm) * 100);
+  document.getElementById("motorPct").textContent = pct;
+  document.getElementById("motorDir").textContent = norm > 0.05 ? "▶ FWD" : norm < -0.05 ? "◀ REV" : "—";
+  const fill = document.getElementById("speedFill");
+  if (norm >= 0) {
+    fill.style.left = "50%";
+    fill.style.width = (pct / 2) + "%";
+    fill.style.background = "#378ADD";
+  } else {
+    fill.style.left = (50 - pct / 2) + "%";
+    fill.style.width = (pct / 2) + "%";
+    fill.style.background = "#c84040";
+  }
+}
+
+cvM.addEventListener("pointerdown", e => { draggingM = true; lastMEY = e.clientY; cvM.setPointerCapture(e.pointerId); });
+cvM.addEventListener("pointermove", e => {
+  if (!draggingM) return;
+  joyMY = Math.max(-62, Math.min(62, joyMY + e.clientY - lastMEY));
+  lastMEY = e.clientY;
+  const norm = parseFloat((-joyMY / 62).toFixed(3));
+  drawMotor(); updateMotorUI(norm);
+  if (norm !== lastSentMotor) { wsSend("M:" + norm); lastSentMotor = norm; }
+});
+cvM.addEventListener("pointerup", () => {
+  draggingM = false;
+  joyMY = 0; drawMotor(); updateMotorUI(0);
+  wsSend("M:0"); lastSentMotor = 0;
+});
+
+// ── Init ──────────────────────────────────────────────
+drawMotor(); updateMotorUI(0);
+</script>
+</body>
+</html>
